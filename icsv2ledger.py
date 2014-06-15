@@ -423,6 +423,7 @@ class Entry:
             'tags': '\n    ; '.join(tags),
             'md5sum': self.md5sum,
             'csv': self.raw_csv}
+
         return template.format(
             **dict(format_data.items() + self.addons.items()))
 
@@ -554,7 +555,7 @@ def tagify(value):
 
 def prompt_for_tags(prompt, values, default):
     tags = list(default)
-    value = prompt_for_value(prompt, values, ", ".join(tags))
+    value, skipped = prompt_for_value(prompt, values, ", ".join(tags))
     while value:
         if value[0] == '-':
             value = tagify(value[1:])
@@ -564,8 +565,8 @@ def prompt_for_tags(prompt, values, default):
             value = tagify(value)
             if not value in tags:
                 tags.append(value)
-        value = prompt_for_value(prompt, values, ", ".join(tags))
-    return tags
+        value, skipped = prompt_for_value(prompt, values, ", ".join(tags))
+    return tags, skipped
 
 
 def prompt_for_value(prompt, values, default):
@@ -589,7 +590,10 @@ def prompt_for_value(prompt, values, default):
     else:
         readline.parse_and_bind("tab: complete")
 
-    return raw_input('{0} [{1}] > '.format(prompt, default))
+    try:
+        return raw_input('{0} [{1}] > '.format(prompt, default)), False
+    except EOFError:
+        return None, True
 
 
 def reset_stdin():
@@ -653,25 +657,38 @@ def main():
                     found = True
 
         modified = False
+        line_finished = False
+        skipped = False
+
         if options.quiet and found:
             pass
         else:
-            if options.clear_screen:
-                print('\033[2J\033[;H')
-            print('\n' + entry.prompt())
-            value = prompt_for_value('Payee', possible_payees, payee)
-            if value:
-                modified = modified if modified else value != payee
-                payee = value
-            value = prompt_for_value('Account', possible_accounts, account)
-            if value:
-                modified = modified if modified else value != account
-                account = value
-            if options.tags:
-                value = prompt_for_tags('Tag', possible_tags, tags)
+            while not line_finished:
+                if options.clear_screen:
+                    print('\033[2J\033[;H')
+                if skipped:
+                    print("\n\nRestarting transaction entry...")
+                print('\n' + entry.prompt())
+                value, skipped = prompt_for_value('Payee', possible_payees, payee)
+                if skipped:
+                    continue
                 if value:
-                    modified = modified if modified else value != tags
-                    tags = value
+                    modified = modified if modified else value != payee
+                    payee = value
+                value, skipped = prompt_for_value('Account', possible_accounts, account)
+                if skipped:
+                    continue
+                if value:
+                    modified = modified if modified else value != account
+                    account = value
+                if options.tags:
+                    value, skipped = prompt_for_tags('Tag', possible_tags, tags)
+                    if skipped:
+                        continue
+                    if value:
+                        modified = modified if modified else value != tags
+                        tags = value
+                line_finished = True
 
         if not found or (found and modified):
             # Add new or changed mapping to mappings and append to file
